@@ -1,37 +1,35 @@
-# Build the @brikell/report-worker service from the monorepo root.
+# Build the @brikell/report-worker service.
 #
-# The worker imports `@brikell/shared` as a workspace package, so we must
-# install pnpm at repo root, copy the relevant workspace packages, and run
-# the worker entry point via pnpm filter.
+# The worker repo (github.com/weilueluo/brikell-report-worker) is itself the
+# build context. brikell-shared/ is a git submodule and a workspace package
+# declared in pnpm-workspace.yaml.
 #
-# Build context (Railway): set this service's "Root Directory" to the repo
-# root and `dockerfilePath` to `brikell-report-worker/Dockerfile`.
+# Railway: ensure submodules are checked out before build (set
+# RAILWAY_GIT_SUBMODULES=true on the service, or configure submodule support
+# in the service's source settings).
 
 FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-ENV NODE_ENV=production
-
 RUN corepack enable
 
-# Copy workspace manifest + lockfile.
+# Copy workspace manifest + lockfile + root package.json first for cache.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 
-# Copy only the packages this service needs to install.
+# Copy the submodule's package.json so pnpm can resolve workspace links.
 COPY brikell-shared/package.json ./brikell-shared/
-COPY brikell-report-worker/package.json ./brikell-report-worker/
 
-RUN pnpm install \
-    --frozen-lockfile \
-    --filter "@brikell/shared..." \
-    --filter "@brikell/report-worker..."
+# Install full deps (incl. dev) so we can run tsc; skip lifecycle scripts
+# because the brikell-shared `prepare` needs source that hasn't been copied yet.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
-# Copy source AFTER install so dependency cache survives source changes.
-COPY brikell-shared ./brikell-shared
-COPY brikell-report-worker ./brikell-report-worker
+# Copy the rest of the sources (worker + submodule contents).
+COPY . .
 
-# Pre-build the shared TypeScript package so tsx can resolve compiled types.
-RUN pnpm --filter "@brikell/shared" run prepare || pnpm --filter "@brikell/shared" run build || true
+# Build the shared package's dist so the worker imports compiled JS at runtime.
+RUN pnpm --filter "@brikell/shared" run build
 
-CMD ["pnpm", "--filter", "@brikell/report-worker", "start"]
+ENV NODE_ENV=production
+
+CMD ["pnpm", "start"]
