@@ -1,0 +1,3 @@
+[submodule "brikell-shared"]
+	path = brikell-shared
+	url = https://github.com/weilueluo/brikell-shared.git
