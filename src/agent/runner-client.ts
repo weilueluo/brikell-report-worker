@@ -12,9 +12,7 @@ import {
   type ManagedRunnerOutput,
 } from "./canonical-output";
 import type { ReportRunnerProgress } from "./runner-types";
-import type { ReportV1 } from "@brikell/shared";
-import type { McpToolCallRecord } from "@brikell/shared";
-import { checkProvenance, collectProvenance } from "@brikell/shared";
+import type { McpCollectionEvidenceRecord, ReportV1 } from "@brikell/shared";
 import { ensureManagedSkillEnvironment, runManagedMessage } from "./managed/runner";
 import type { ManagedMessageRunResult } from "./managed/runner";
 import type { UploadedVaultDoc } from "../vault/uploaded-docs";
@@ -48,7 +46,7 @@ export type ManagedRunnerResult = {
   canonicalAbsentReason?: string;
   sessionId?: string;
   runLogPath?: string;
-  mcpToolCalls: McpToolCallRecord[];
+  mcpCollectionEvidence: McpCollectionEvidenceRecord[];
 };
 
 export type RunReportAgentOptions = {
@@ -86,93 +84,6 @@ type ManagedRunEvent = {
   details?: unknown;
 };
 
-const KNOWN_PROVIDER_PREFIXES = ["plandata", "datafordeler", "dataforsyningen", "supabase"] as const;
-
-export function deriveProvider(toolName: string): string {
-  const lower = toolName.toLowerCase();
-  for (const prefix of KNOWN_PROVIDER_PREFIXES) {
-    if (lower.startsWith(`${prefix}.`) || lower.startsWith(`${prefix}_`) || lower.includes(prefix)) {
-      return prefix;
-    }
-  }
-  if (lower.includes("/")) return lower.split("/")[0]!;
-  if (lower.includes(".")) return lower.split(".")[0]!;
-  return "managed-agent";
-}
-
-type ToolDetails = { input?: unknown; server?: unknown; [key: string]: unknown };
-type ResultDetails = { ok?: unknown; content?: unknown; [key: string]: unknown };
-
-export function buildToolCallBuffer() {
-  const records: McpToolCallRecord[] = [];
-  let openIndex: number | undefined;
-
-  function ingest(event: ManagedRunEvent): void {
-    if (event.kind === "tool") {
-      if (openIndex !== undefined) {
-        records[openIndex]!.ok = false;
-        records[openIndex]!.diagnostic = "no result event before next tool call";
-      }
-      const toolName = (event.message || "").trim() || "managed-agent.tool";
-      const details = (event.details ?? {}) as ToolDetails;
-      records.push({
-        toolName,
-        provider: deriveProvider(toolName),
-        args: typeof details.input !== "undefined" ? details.input : details,
-        sourceProvenance: typeof details.server !== "undefined" ? { server: details.server } : undefined,
-        fetchedAt: new Date().toISOString(),
-        ok: true,
-      });
-      openIndex = records.length - 1;
-      return;
-    }
-    if (event.kind === "result") {
-      const details = (event.details ?? {}) as ResultDetails;
-      const ok = typeof details.ok === "boolean" ? details.ok : true;
-      const resultPayload = typeof details.content !== "undefined" ? details.content : details;
-      if (openIndex !== undefined) {
-        const record = records[openIndex]!;
-        record.result = resultPayload;
-        record.ok = ok;
-        if (!ok && typeof event.message === "string" && event.message.trim().length > 0) {
-          record.diagnostic = event.message;
-        }
-        if (ok) {
-          const check = checkProvenance(resultPayload);
-          if (check.ok) {
-            const refs = collectProvenance(resultPayload);
-            record.sourceProvenance = {
-              ...(record.sourceProvenance ?? {}),
-              ref: check.ref,
-              dataSources: refs.sources,
-              upstreamIds: refs.upstreamIds,
-            };
-          } else {
-            record.ok = false;
-            record.diagnostic = `bridge_missing_provenance: ${check.reason}`;
-          }
-        }
-        openIndex = undefined;
-      } else {
-        records.push({
-          toolName: event.message || "result",
-          provider: "managed-agent",
-          result: resultPayload,
-          fetchedAt: new Date().toISOString(),
-          ok,
-          diagnostic: ok ? undefined : event.message || undefined,
-        });
-      }
-    }
-  }
-
-  function snapshot(): McpToolCallRecord[] {
-    return records.map((record) => ({ ...record }));
-  }
-
-  return { ingest, snapshot };
-}
-
 export type { ManagedRunEvent };
 
 export const runReportAgent: RunReportAgent = async (
@@ -191,7 +102,6 @@ export const runReportAgent: RunReportAgent = async (
   };
 
   let phase = "announce-runner-start";
-  const toolCallBuffer = buildToolCallBuffer();
   try {
     throwIfAborted();
     await onProgress?.("Starting managed report runner.");
@@ -213,7 +123,6 @@ export const runReportAgent: RunReportAgent = async (
         runOutputDir: env.MANAGED_AGENT_RUN_OUTPUT_DIR,
         onEvent: async (event) => {
           throwIfAborted();
-          toolCallBuffer.ingest(event);
           if (event.kind === "tool" || event.kind === "result" || event.kind === "agent") {
             await onProgress?.(event.message);
           }
@@ -271,7 +180,7 @@ export const runReportAgent: RunReportAgent = async (
         canonicalOutcome.kind === "found" ? undefined : describeExtractOutcome(canonicalOutcome),
       sessionId: result.sessionId,
       runLogPath: result.runLogPath,
-      mcpToolCalls: toolCallBuffer.snapshot(),
+      mcpCollectionEvidence: result.mcpCollectionEvidence ?? [],
     };
   } catch (error) {
     console.error("Report runner failed.", {

@@ -43,7 +43,7 @@ export function failingReportRunner(
     },
     run: async () => {
       if (failOn === "run") throw error;
-      return { mcpToolCalls: [] };
+      return { mcpCollectionEvidence: [] };
     },
   };
 }

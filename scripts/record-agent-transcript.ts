@@ -32,7 +32,7 @@ import {
   buildFinalEntry,
   parseTranscript,
   serializeTranscript,
-  type McpToolCallRecord,
+  type McpCollectionEvidenceRecord,
   type TranscriptEntry,
   type TranscriptHeader,
 } from "@brikell/shared";
@@ -65,14 +65,6 @@ function parseArgs(argv: ReadonlyArray<string>): Args {
   return args as Args;
 }
 
-function sanitiseRecord(record: McpToolCallRecord): McpToolCallRecord {
-  const next: McpToolCallRecord = { ...record };
-  if (next.diagnostic) {
-    next.diagnostic = sanitiseString(next.diagnostic);
-  }
-  return next;
-}
-
 function sanitiseString(value: string): string {
   return value
     .replace(/\b[A-Za-z]:[\\/][^\s'"]+/g, "<machine-path>")
@@ -100,8 +92,9 @@ async function main(): Promise<void> {
     },
   );
 
-  for (const record of result.mcpToolCalls) {
-    entries.push({ kind: "toolCall", record: sanitiseRecord(record) });
+  const evidence: McpCollectionEvidenceRecord[] = result.mcpCollectionEvidence ?? [];
+  for (const record of evidence) {
+    entries.push({ kind: "collectionEvidence", record });
   }
 
   entries.push(
@@ -113,7 +106,7 @@ async function main(): Promise<void> {
         ? sanitiseString(result.canonicalAbsentReason)
         : undefined,
       sessionId: result.sessionId,
-      mcpToolCalls: result.mcpToolCalls.map(sanitiseRecord),
+      mcpCollectionEvidence: evidence,
     }),
   );
 

@@ -83,7 +83,7 @@ Generate a live public-data-backed report before making property, planning, or d
 
 /**
  * Convenience helper that builds the legacy mock-runner payload (markdown +
- * empty mcpToolCalls) used as the default `staticReportRunner` result.
+ * empty mcpCollectionEvidence) used as the default `staticReportRunner` result.
  */
 export function buildFixtureMarkdownRunnerResult(
   jobId: string,
@@ -91,7 +91,7 @@ export function buildFixtureMarkdownRunnerResult(
 ): ManagedRunnerResult {
   return {
     markdown: buildFixtureReportMarkdown(jobId, address),
-    mcpToolCalls: [],
+    mcpCollectionEvidence: [],
   };
 }
 
@@ -113,7 +113,7 @@ export function buildFixtureCanonicalRunnerResult(
       { uploadedDocuments: options.uploadedDocuments },
     ),
     canonicalSource: "mock",
-    mcpToolCalls: [],
+    mcpCollectionEvidence: [],
   };
 }
 
@@ -126,7 +126,7 @@ export function buildFixtureEmptyRunnerResult(
 ): ManagedRunnerResult {
   return {
     canonicalAbsentReason: reason,
-    mcpToolCalls: [],
+    mcpCollectionEvidence: [],
   };
 }
 
@@ -143,6 +143,6 @@ export function buildFixtureMarkdownOnlyResult(
   return {
     markdown: buildFixtureReportMarkdown(jobId, address),
     canonicalAbsentReason: reason,
-    mcpToolCalls: [],
+    mcpCollectionEvidence: [],
   };
 }

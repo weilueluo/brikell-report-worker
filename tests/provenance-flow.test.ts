@@ -2,62 +2,36 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  collectProvenance,
   vaultItemSchema,
   type ReportV1,
   type VaultItem,
 } from "@brikell/shared";
 
-import { buildToolCallBuffer } from "../src/agent/runner-client";
 import { linkSourceDocumentsToVault } from "../src/vault/link-source-documents";
 
 /**
  * End-to-end provenance contract:
- *   stamped MCP response  →  buffer record  →  vault item metadata  →  linked V1 citation
+ *   stamped MCP collection-evidence record  →  vault item metadata  →  linked V1 citation
  *
  * Locks the chain so adding a new MCP source or renaming a vault metadata key trips one
  * test instead of leaking unstamped data into a vault item or canonical citation.
  */
-test("provenance flows from a stamped MCP response into a linked V1 citation", () => {
-  const buffer = buildToolCallBuffer();
-  buffer.ingest({
-    kind: "tool",
-    message: "datafordeler.resolve_property",
-    details: { input: { bfeNumber: "123" }, server: "datafordeler" },
-  });
-  buffer.ingest({
-    kind: "result",
-    message: "MCP tool result",
-    details: {
-      ok: true,
-      content: {
-        propertyId: "property:123",
-        _ref: { source: "datafordeler.property", upstreamId: "123", fetchedAt: "2026-01-01T00:00:00.000Z" },
-      },
-    },
-  });
-  const [record] = buffer.snapshot();
-  assert.ok(record);
-  assert.equal(record.ok, true);
-
-  const refs = collectProvenance(record.result);
-  assert.deepEqual(refs.sources, ["datafordeler.property"]);
-  assert.deepEqual(refs.upstreamIds, ["123"]);
-
+test("provenance flows from a stamped MCP collection-evidence record into a linked V1 citation", () => {
   const vaultItem: VaultItem = vaultItemSchema.parse({
     id: "vault-1",
     ownerClientId: "owner",
     assignmentId: "assign",
     kind: "mcp_tool_result",
-    title: "datafordeler.resolve_property",
+    title: "mcp.property.collect",
     sourceJobId: "job-1",
     metadata: {
-      provider: record.provider,
-      toolName: record.toolName,
-      ok: record.ok,
-      dataSources: refs.sources,
-      upstreamIds: refs.upstreamIds,
-      result: record.result,
+      provider: "datafordeler.property",
+      toolName: "mcp.property.collect",
+      ok: true,
+      collectionId: "col_property_1",
+      intent: "property.collect",
+      dataSources: ["datafordeler.property"],
+      upstreamIds: ["123"],
     },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -87,7 +61,7 @@ test("provenance flows from a stamped MCP response into a linked V1 citation", (
       kommuneplan: { availability: "not_available" },
     },
     sourceDocuments: [
-      { id: "mcp:datafordeler.property:123", type: "other", title: "datafordeler.resolve_property" },
+      { id: "mcp:datafordeler.property:123", type: "other", title: "datafordeler.property" },
     ],
   };
 

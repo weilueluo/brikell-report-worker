@@ -6,9 +6,9 @@ import {
   listVaultItemsForAssignment,
   listVaultItemsForOwner,
   queryVaultItems,
-  recordMcpToolCallEvidence,
   recordReportArtifacts,
 } from "../src/vault/vault-service";
+import { recordMcpCollectionEvidence } from "../src/vault/collection-evidence";
 import { createAssignment } from "../src/assignments/assignment-service";
 import { createReport, getReport, startReportJob } from "../src/reports/report-service";
 import { createStores } from "../src/storage";
@@ -73,53 +73,42 @@ test("recordReportArtifacts persists vault items per artifact and is idempotent 
   });
 });
 
-test("recordMcpToolCallEvidence skips when there are no calls and stamps source URLs when derivable", async () => {
+test("recordMcpCollectionEvidence skips when there are no records and writes one vault item per record", async () => {
   await withSupabaseTestContext(async (ctx) => {
     const assignment = await createAssignment({ ownerClientId: ctx.ownerClientId, address: ADDRESS });
-    const empty = await recordMcpToolCallEvidence({
+    const empty = await recordMcpCollectionEvidence({
       assignmentId: assignment.id,
       ownerClientId: ctx.ownerClientId,
       jobId: ctx.uniqueId("job-empty"),
-      toolCalls: [],
+      records: [],
     });
     assert.deepEqual(empty, []);
 
-    const items = await recordMcpToolCallEvidence({
+    const items = await recordMcpCollectionEvidence({
       assignmentId: assignment.id,
       ownerClientId: ctx.ownerClientId,
       jobId: ctx.uniqueId("job-mcp"),
-      toolCalls: [
+      records: [
         {
-          toolName: "datafordeler.property.resolve_property",
-          provider: "datafordeler",
-          args: { bfeNumber: "12345" },
-          result: { propertyId: "12345" },
-          fetchedAt: "2026-04-29T00:00:00Z",
-          ok: true,
-        },
-        {
-          toolName: "unknown.tool",
-          provider: "unknown",
-          args: {},
-          result: {},
-          fetchedAt: "2026-04-29T00:00:01Z",
-          ok: true,
+          collectionId: "col_property_1",
+          intent: "property.collect",
+          ref: {
+            source: "datafordeler.ejendom",
+            upstreamId: "12345",
+            fetchedAt: "2026-04-29T00:00:00.000Z",
+          },
+          responseSha256: "a".repeat(64),
+          counts: { records: 1, documents: 0 },
         },
       ],
     });
-    assert.equal(items.length, 2);
-    const datafordelerItem = items.find(
-      (i) => i.metadata?.toolName === "datafordeler.property.resolve_property",
-    );
-    assert.ok(datafordelerItem, "expected datafordeler item");
-    assert.equal(datafordelerItem!.kind, "mcp_tool_result");
-    assert.equal(
-      datafordelerItem!.metadata?.sourceUrl,
-      "https://datafordeler.dk/dataoversigt/ejendomsbeliggenhed/?bfeNumber=12345",
-    );
-    const unknownItem = items.find((i) => i.metadata?.toolName === "unknown.tool");
-    assert.ok(unknownItem);
-    assert.equal(unknownItem!.metadata?.sourceUrl, undefined);
+    assert.equal(items.length, 1);
+    const item = items[0]!;
+    assert.equal(item.kind, "mcp_tool_result");
+    assert.equal(item.metadata?.toolName, "mcp.property.collect");
+    assert.equal(item.metadata?.provider, "datafordeler.ejendom");
+    assert.equal(item.metadata?.collectionId, "col_property_1");
+    assert.equal(item.metadata?.intent, "property.collect");
   });
 });
 
@@ -190,18 +179,21 @@ test("queryVaultItems returns owner-scoped results filtered by provider when con
   await withSupabaseTestContext(async (ctx) => {
     const owner = ctx.ownerClientId;
     const assignment = await createAssignment({ ownerClientId: owner, address: ADDRESS });
-    await recordMcpToolCallEvidence({
+    await recordMcpCollectionEvidence({
       assignmentId: assignment.id,
       ownerClientId: owner,
       jobId: ctx.uniqueId("job-query"),
-      toolCalls: [
+      records: [
         {
-          toolName: "datafordeler.property.resolve_property",
-          provider: "datafordeler",
-          args: { bfeNumber: "1" },
-          result: { propertyId: "1" },
-          fetchedAt: "2026-04-29T00:00:00Z",
-          ok: true,
+          collectionId: "col_query_1",
+          intent: "property.collect",
+          ref: {
+            source: "datafordeler.ejendom",
+            upstreamId: "1",
+            fetchedAt: "2026-04-29T00:00:00.000Z",
+          },
+          responseSha256: "b".repeat(64),
+          counts: { records: 1, documents: 0 },
         },
       ],
     });
@@ -212,7 +204,7 @@ test("queryVaultItems returns owner-scoped results filtered by provider when con
 
     const filteredByProvider = await queryVaultItems({
       ownerClientId: owner,
-      provider: "datafordeler",
+      provider: "datafordeler.ejendom",
     });
     assert.equal(filteredByProvider.length, 1);
 

@@ -11,8 +11,9 @@ import {
 import { createErrorDiagnostic } from "@brikell/shared";
 import { createStores } from "../storage";
 import { readAppEnv } from "../validation/env";
-import { recordMcpToolCallEvidence, recordReportArtifacts, listVaultItemsForAssignment } from "../vault/vault-service";
-import type { McpToolCallRecord, ReportArtifactInput, VaultItem } from "@brikell/shared";
+import { recordReportArtifacts, listVaultItemsForAssignment } from "../vault/vault-service";
+import { recordMcpCollectionEvidence } from "../vault/collection-evidence";
+import type { McpCollectionEvidenceRecord, ReportArtifactInput, VaultItem } from "@brikell/shared";
 import { linkSourceDocumentsToVault } from "../vault/link-source-documents";
 import { pickUploadedVaultDocsForPrompt, type UploadedVaultDoc } from "../vault/uploaded-docs";
 import { renderReportPdf } from "./pdf";
@@ -331,7 +332,7 @@ export async function startReportJob(
     }));
 
     if (interimJob.assignmentId) {
-      const recordedMcpItems = await recordMcpToolCallEvidenceForJob(interimJob, runnerResult.mcpToolCalls);
+      const recordedMcpItems = await recordMcpCollectionEvidenceForJob(interimJob, runnerResult.mcpCollectionEvidence ?? []);
       if (canonicalRender && runnerResult.canonicalReport) {
         const allVaultItems = await listVaultItemsForAssignment(interimJob.ownerClientId, interimJob.assignmentId).catch((error) => {
           console.warn("Could not list vault items for source-document linking; continuing without it.", {
@@ -650,24 +651,24 @@ async function recordVaultArtifactsForJob(
   }
 }
 
-async function recordMcpToolCallEvidenceForJob(
+async function recordMcpCollectionEvidenceForJob(
   job: ReportJob,
-  toolCalls: ReadonlyArray<McpToolCallRecord>,
+  records: ReadonlyArray<McpCollectionEvidenceRecord>,
 ): Promise<VaultItem[]> {
-  if (!job.assignmentId || toolCalls.length === 0) return [];
+  if (!job.assignmentId || records.length === 0) return [];
   const { assignments } = createStores();
   const assignment = await assignments.get(job.assignmentId);
   if (!assignment) return [];
 
   try {
-    return await recordMcpToolCallEvidence({
+    return await recordMcpCollectionEvidence({
       assignmentId: job.assignmentId,
       ownerClientId: assignment.ownerClientId,
       jobId: job.id,
-      toolCalls,
+      records,
     });
   } catch (error) {
-    console.error("Could not record MCP tool-call evidence in Vault.", {
+    console.error("Could not record MCP collection evidence in Vault.", {
       jobId: job.id,
       assignmentId: job.assignmentId,
       error: error instanceof Error ? error.message : String(error),
@@ -792,3 +793,6 @@ function filenameStem(address: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "address";
 }
+
+export const __testOnly = { recordMcpCollectionEvidenceForJob };
+

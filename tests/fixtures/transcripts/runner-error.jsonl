@@ -1,6 +1,5 @@
 {"schemaVersion":1,"recordedAt":"2026-01-01T00:00:00.000Z","scenario":"runner-error"}
 {"kind":"progress","message":"Starting managed report runner."}
 {"kind":"progress","message":"Resolving address candidate."}
-{"kind":"toolCall","record":{"toolName":"search_address","provider":"dataforsyningen","args":{"query":"Test Address 1, 1000 København"},"fetchedAt":"2026-01-01T00:00:00.000Z","durationMs":1200,"ok":false,"diagnostic":"Upstream timeout after 1200ms","sourceProvenance":{"source":"dataforsyningen.dar","fetchedAt":"2026-01-01T00:00:00.000Z"}}}
 {"kind":"progress","message":"Address lookup failed; recording diagnostic."}
-{"kind":"final","canonicalAbsentReason":"Address lookup failed; cannot continue.","sessionId":"fixture-session-error","mcpToolCalls":[{"toolName":"search_address","provider":"dataforsyningen","args":{"query":"Test Address 1, 1000 København"},"fetchedAt":"2026-01-01T00:00:00.000Z","durationMs":1200,"ok":false,"diagnostic":"Upstream timeout after 1200ms","sourceProvenance":{"source":"dataforsyningen.dar","fetchedAt":"2026-01-01T00:00:00.000Z"}}]}
+{"kind":"final","canonicalAbsentReason":"Address lookup failed; cannot continue.","sessionId":"fixture-session-error","mcpCollectionEvidence":[]}

@@ -49,58 +49,54 @@ test("replayReportRunner replays progress messages and returns the final result"
   assert.equal(result.sessionId, "fixture-session-basic");
   assert.ok(result.markdown && result.markdown.length > 0);
   assert.equal(result.canonicalReport?.schemaVersion, "v1");
-  assert.equal(result.mcpToolCalls.length, 2);
-  assert.equal(result.mcpToolCalls[0]!.toolName, "search_address");
-  assert.equal(result.mcpToolCalls[0]!.ok, true);
+  assert.equal(result.mcpCollectionEvidence.length, 2);
+  assert.equal(result.mcpCollectionEvidence[0]!.intent, "address.resolve");
+  assert.equal(result.mcpCollectionEvidence[0]!.ref.source, "dataforsyningen.dar");
+  assert.equal(result.mcpCollectionEvidence[1]!.intent, "property.collect");
 });
 
-test("replayReportRunner surfaces failed-tool diagnostics from a runner-error transcript", async () => {
+test("replayReportRunner returns the canonical-absent reason from a runner-error transcript", async () => {
   const runner = replayReportRunner({ path: join(FIXTURE_DIR, "runner-error.jsonl") });
 
   const result = await runner.run("job-replay-err", candidate());
 
   assert.equal(result.canonicalReport, undefined);
   assert.equal(result.canonicalAbsentReason, "Address lookup failed; cannot continue.");
-  assert.equal(result.mcpToolCalls.length, 1);
-  assert.equal(result.mcpToolCalls[0]!.ok, false);
-  assert.match(result.mcpToolCalls[0]!.diagnostic ?? "", /timeout/i);
+  assert.equal(result.mcpCollectionEvidence.length, 0);
 });
 
-test("parseTranscript rejects an unstamped successful tool call", async () => {
+test("parseTranscript rejects collection-evidence with documents.length not matching counts.documents", async () => {
   const header: TranscriptHeader = {
     schemaVersion: 1,
     recordedAt: "2026-01-01T00:00:00.000Z",
-    scenario: "unstamped",
+    scenario: "doc-mismatch",
   };
   const entries: TranscriptEntry[] = [
     {
-      kind: "toolCall",
-      record: {
-        toolName: "search_address",
-        provider: "dataforsyningen",
-        result: { records: [{ id: "addr-1" }] },
-        fetchedAt: "2026-01-01T00:00:00.000Z",
-        ok: true,
-      },
-    },
-    {
       kind: "final",
-      mcpToolCalls: [
+      mcpCollectionEvidence: [
         {
-          toolName: "search_address",
-          provider: "dataforsyningen",
-          result: { records: [{ id: "addr-1" }] },
-          fetchedAt: "2026-01-01T00:00:00.000Z",
-          ok: true,
+          collectionId: "col_1",
+          intent: "property.collect",
+          ref: { source: "ds", upstreamId: "u", fetchedAt: "2026-01-01T00:00:00.000Z" },
+          responseSha256: "f".repeat(64),
+          counts: { records: 1, documents: 2 },
+          documents: [
+            {
+              documentId: "d1",
+              source: "ds",
+              upstreamId: "u-d1",
+              sha256: "a".repeat(64),
+              byteSize: 10,
+              extractionStatus: "ok",
+            },
+          ],
         },
       ],
     },
   ];
   const text = serializeTranscript({ header, entries });
-  assert.throws(
-    () => parseTranscript(text),
-    /unstamped: no _ref found/,
-  );
+  assert.throws(() => parseTranscript(text), /does not match counts\.documents/);
 });
 
 test("parseTranscript rejects a transcript with two final entries", async () => {
@@ -110,8 +106,8 @@ test("parseTranscript rejects a transcript with two final entries", async () => 
     scenario: "double-final",
   };
   const entries: TranscriptEntry[] = [
-    { kind: "final", mcpToolCalls: [] },
-    { kind: "final", mcpToolCalls: [] },
+    { kind: "final", mcpCollectionEvidence: [] },
+    { kind: "final", mcpCollectionEvidence: [] },
   ];
   const text = serializeTranscript({ header, entries });
   assert.throws(() => parseTranscript(text), /exactly one "final" entry/);
@@ -130,7 +126,7 @@ test("replayReportRunner accepts an in-memory transcript via parsed input", asyn
       kind: "final",
       markdown: "# inline",
       sessionId: "session-inline",
-      mcpToolCalls: [],
+      mcpCollectionEvidence: [],
     },
   ];
   const path = join(tmp, "inline.jsonl");

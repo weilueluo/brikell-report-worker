@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -8,6 +7,22 @@ import {
   __test_only,
   managedSkillUploadDisplayTitle,
 } from "../../src/agent/managed/runner";
+
+const testTmpRoot = join(process.cwd(), ".test-artifacts", "skill-upload");
+
+async function makeTestDir(): Promise<string> {
+  await mkdir(testTmpRoot, { recursive: true });
+  return mkdtemp(join(testTmpRoot, "case-"));
+}
+
+async function cleanupTestDir(dir: string): Promise<void> {
+  await rm(dir, { recursive: true, force: true });
+  await rm(testTmpRoot, { recursive: true, force: true });
+}
+
+function missingSkillDirectory(): string {
+  return join(process.cwd(), ".test-artifacts", "missing-skill-directory");
+}
 
 function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   const previous = new Map<string, string | undefined>();
@@ -27,8 +42,8 @@ function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Pro
 function withCleanSkillEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
   return withEnv(
     {
-      PLANDATA_SKILL_ID: undefined,
-      PLANDATA_SKILL_VERSION: undefined,
+      SQL_SKILL_ID: undefined,
+      SQL_SKILL_VERSION: undefined,
       MANAGED_AGENT_REQUIRE_CONFIGURED_SKILLS: undefined,
       VERCEL: undefined,
       ...overrides,
@@ -50,11 +65,11 @@ function withSkillRegistryPath<T>(registryPath: string, fn: () => Promise<T>): P
 
 test("managedSkillUploadDisplayTitle includes a deterministic content hash", () => {
   const title = managedSkillUploadDisplayTitle(
-    "Plandata",
+    "SQL",
     "c3d438e79f4318aa61175f9d268cde1d5f8f855afbad0be09eec36056e25738f",
   );
 
-  assert.equal(title, "Plandata c3d438e79f43");
+  assert.equal(title, "SQL c3d438e79f43");
 });
 
 test("managedSkillUploadDisplayTitle stays within the platform title limit", () => {
@@ -67,13 +82,13 @@ test("managedSkillUploadDisplayTitle stays within the platform title limit", () 
 });
 
 test("prepareManagedSkills uploads uncached skills with SDK retries disabled", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "brikell-skill-upload-"));
+  const dir = await makeTestDir();
   try {
-    const skillDir = join(dir, "plandata");
+    const skillDir = join(dir, "sql");
     await mkdir(skillDir, { recursive: true });
     await writeFile(
       join(skillDir, "SKILL.md"),
-      "---\nname: plandata\ndisplay_title: Plandata\n---\n# Plandata\n",
+      "---\nname: sql\ndisplay_title: SQL\n---\n# SQL\n",
       "utf8",
     );
     await writeFile(join(skillDir, "README.txt"), "provider guidance\n", "utf8");
@@ -96,17 +111,17 @@ test("prepareManagedSkills uploads uncached skills with SDK retries disabled", a
     const result = await withSkillRegistryPath(registryPath, async () => {
       const managedSkills = await __test_only.prepareManagedSkills(beta, [
         {
-          key: "plandata",
-          displayTitle: "Plandata",
+          key: "sql",
+          displayTitle: "SQL",
           directoryPath: skillDir,
-          skillIdEnv: "PLANDATA_SKILL_ID",
-          versionEnv: "PLANDATA_SKILL_VERSION",
+          skillIdEnv: "SQL_SKILL_ID",
+          versionEnv: "SQL_SKILL_VERSION",
         },
       ]);
       return {
         managedSkills,
-        skillId: process.env.PLANDATA_SKILL_ID,
-        version: process.env.PLANDATA_SKILL_VERSION,
+        skillId: process.env.SQL_SKILL_ID,
+        version: process.env.SQL_SKILL_VERSION,
       };
     });
 
@@ -115,18 +130,18 @@ test("prepareManagedSkills uploads uncached skills with SDK retries disabled", a
     assert.equal(result.version, "version_1");
     assert.equal(calls.length, 1);
     assert.equal(listCount, 1);
-    assert.match(calls[0]!.params.display_title ?? "", /^Plandata [a-f0-9]{12}$/);
+    assert.match(calls[0]!.params.display_title ?? "", /^SQL [a-f0-9]{12}$/);
     assert.ok((calls[0]!.params.files?.length ?? 0) >= 2);
     assert.deepEqual(calls[0]!.options, { maxRetries: 0 });
 
     const registry = JSON.parse(await readFile(registryPath, "utf8")) as {
-      plandata?: { skillId?: string; version?: string; hash?: string };
+      sql?: { skillId?: string; version?: string; hash?: string };
     };
-    assert.equal(registry.plandata?.skillId, "skill_uploaded");
-    assert.equal(registry.plandata?.version, "version_1");
-    assert.equal(typeof registry.plandata?.hash, "string");
+    assert.equal(registry.sql?.skillId, "skill_uploaded");
+    assert.equal(registry.sql?.version, "version_1");
+    assert.equal(typeof registry.sql?.hash, "string");
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await cleanupTestDir(dir);
   }
 });
 
@@ -143,24 +158,24 @@ test("prepareManagedSkills uses configured skill IDs without reading files or up
 
   const result = await withCleanSkillEnv(
     {
-      PLANDATA_SKILL_ID: "skill_configured",
-      PLANDATA_SKILL_VERSION: "version_configured",
+      SQL_SKILL_ID: "skill_configured",
+      SQL_SKILL_VERSION: "version_configured",
       MANAGED_AGENT_REQUIRE_CONFIGURED_SKILLS: "on",
     },
     async () => {
       const managedSkills = await __test_only.prepareManagedSkills(beta, [
         {
-          key: "plandata",
-          displayTitle: "Plandata",
-          directoryPath: join(tmpdir(), "missing-skill-directory"),
-          skillIdEnv: "PLANDATA_SKILL_ID",
-          versionEnv: "PLANDATA_SKILL_VERSION",
+          key: "sql",
+          displayTitle: "SQL",
+          directoryPath: missingSkillDirectory(),
+          skillIdEnv: "SQL_SKILL_ID",
+          versionEnv: "SQL_SKILL_VERSION",
         },
       ]);
       return {
         managedSkills,
-        skillId: process.env.PLANDATA_SKILL_ID,
-        version: process.env.PLANDATA_SKILL_VERSION,
+        skillId: process.env.SQL_SKILL_ID,
+        version: process.env.SQL_SKILL_VERSION,
       };
     },
   );
@@ -186,34 +201,34 @@ test("prepareManagedSkills requires configured skill IDs only when explicitly re
     () =>
       withCleanSkillEnv(
         {
-          PLANDATA_SKILL_ID: undefined,
-          PLANDATA_SKILL_VERSION: undefined,
+          SQL_SKILL_ID: undefined,
+          SQL_SKILL_VERSION: undefined,
           MANAGED_AGENT_REQUIRE_CONFIGURED_SKILLS: "on",
         },
         () =>
           __test_only.prepareManagedSkills(beta, [
             {
-              key: "plandata",
-              displayTitle: "Plandata",
-              directoryPath: join(tmpdir(), "missing-skill-directory"),
-              skillIdEnv: "PLANDATA_SKILL_ID",
-              versionEnv: "PLANDATA_SKILL_VERSION",
+              key: "sql",
+              displayTitle: "SQL",
+              directoryPath: missingSkillDirectory(),
+              skillIdEnv: "SQL_SKILL_ID",
+              versionEnv: "SQL_SKILL_VERSION",
             },
           ]),
       ),
-    /runtime skill upload is disabled.*plandata: PLANDATA_SKILL_ID/,
+    /runtime skill upload is disabled.*sql: SQL_SKILL_ID/,
   );
   assert.equal(createCalled, false);
 });
 
 test("prepareManagedSkills bootstraps skills on Vercel when deployment env vars are empty", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "brikell-skill-upload-"));
+  const dir = await makeTestDir();
   try {
-    const skillDir = join(dir, "plandata");
+    const skillDir = join(dir, "sql");
     await mkdir(skillDir, { recursive: true });
     await writeFile(
       join(skillDir, "SKILL.md"),
-      "---\nname: plandata\ndisplay_title: Plandata\n---\n# Plandata\n",
+      "---\nname: sql\ndisplay_title: SQL\n---\n# SQL\n",
       "utf8",
     );
 
@@ -233,24 +248,24 @@ test("prepareManagedSkills bootstraps skills on Vercel when deployment env vars 
     const result = await withCleanSkillEnv(
       {
         VERCEL: "1",
-        PLANDATA_SKILL_ID: "",
-        PLANDATA_SKILL_VERSION: "",
+        SQL_SKILL_ID: "",
+        SQL_SKILL_VERSION: "",
         MANAGED_AGENT_SKILL_REGISTRY_FILE: join(dir, "registry.json"),
       },
       async () => {
         const managedSkills = await __test_only.prepareManagedSkills(beta, [
           {
-            key: "plandata",
-            displayTitle: "Plandata",
+            key: "sql",
+            displayTitle: "SQL",
             directoryPath: skillDir,
-            skillIdEnv: "PLANDATA_SKILL_ID",
-            versionEnv: "PLANDATA_SKILL_VERSION",
+            skillIdEnv: "SQL_SKILL_ID",
+            versionEnv: "SQL_SKILL_VERSION",
           },
         ]);
         return {
           managedSkills,
-          skillId: process.env.PLANDATA_SKILL_ID,
-          version: process.env.PLANDATA_SKILL_VERSION,
+          skillId: process.env.SQL_SKILL_ID,
+          version: process.env.SQL_SKILL_VERSION,
         };
       },
     );
@@ -260,18 +275,18 @@ test("prepareManagedSkills bootstraps skills on Vercel when deployment env vars 
     assert.equal(result.version, "version_bootstrapped");
     assert.equal(createCount, 1);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await cleanupTestDir(dir);
   }
 });
 
 test("prepareManagedSkills recovers concurrent create collisions by re-reading uploaded skills", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "brikell-skill-upload-"));
+  const dir = await makeTestDir();
   try {
-    const skillDir = join(dir, "plandata");
+    const skillDir = join(dir, "sql");
     await mkdir(skillDir, { recursive: true });
     await writeFile(
       join(skillDir, "SKILL.md"),
-      "---\nname: plandata\ndisplay_title: Plandata\n---\n# Plandata\n",
+      "---\nname: sql\ndisplay_title: SQL\n---\n# SQL\n",
       "utf8",
     );
 
@@ -299,16 +314,16 @@ test("prepareManagedSkills recovers concurrent create collisions by re-reading u
     const result = await withSkillRegistryPath(join(dir, "registry.json"), async () => {
       const managedSkills = await __test_only.prepareManagedSkills(beta, [
         {
-          key: "plandata",
-          displayTitle: "Plandata",
+          key: "sql",
+          displayTitle: "SQL",
           directoryPath: skillDir,
-          skillIdEnv: "PLANDATA_SKILL_ID",
-          versionEnv: "PLANDATA_SKILL_VERSION",
+          skillIdEnv: "SQL_SKILL_ID",
+          versionEnv: "SQL_SKILL_VERSION",
         },
       ]);
       return {
         managedSkills,
-        skillId: process.env.PLANDATA_SKILL_ID,
+        skillId: process.env.SQL_SKILL_ID,
       };
     });
 
@@ -318,7 +333,7 @@ test("prepareManagedSkills recovers concurrent create collisions by re-reading u
     assert.equal(result.skillId, "skill_existing_after_collision");
     assert.equal(listCount, 2);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await cleanupTestDir(dir);
   }
 });
 
@@ -335,13 +350,13 @@ test("requiresConfiguredManagedSkillIds is controlled by the explicit require fl
 });
 
 test("prepareManagedSkills reuses cached skill registry entries for unchanged files", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "brikell-skill-upload-"));
+  const dir = await makeTestDir();
   try {
-    const skillDir = join(dir, "plandata");
+    const skillDir = join(dir, "sql");
     await mkdir(skillDir, { recursive: true });
     await writeFile(
       join(skillDir, "SKILL.md"),
-      "---\nname: plandata\ndisplay_title: Plandata\n---\n# Plandata\n",
+      "---\nname: sql\ndisplay_title: SQL\n---\n# SQL\n",
       "utf8",
     );
 
@@ -360,11 +375,11 @@ test("prepareManagedSkills reuses cached skill registry entries for unchanged fi
     };
     const skills = [
       {
-        key: "plandata",
-        displayTitle: "Plandata",
+        key: "sql",
+        displayTitle: "SQL",
         directoryPath: skillDir,
-        skillIdEnv: "PLANDATA_SKILL_ID",
-        versionEnv: "PLANDATA_SKILL_VERSION",
+        skillIdEnv: "SQL_SKILL_ID",
+        versionEnv: "SQL_SKILL_VERSION",
       },
     ];
 
@@ -374,6 +389,6 @@ test("prepareManagedSkills reuses cached skill registry entries for unchanged fi
     assert.equal(createCount, 1);
     assert.deepEqual(second, [{ type: "custom", skill_id: "skill_uploaded", version: "version_1" }]);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await cleanupTestDir(dir);
   }
 });

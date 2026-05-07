@@ -77,15 +77,15 @@ The worker loop owns one `CancellationState` per claimed job (`src/cancellation.
 Every record returned by an MCP tool must carry a `_ref` field — `{ source: DataSourceName, upstreamId?, fetchedAt, endpoint? }` — defined in `@brikell/shared/src/provenance/`.
 
 1. The MCP servers stamp `_ref` at the service boundary (`stampProvenance`).
-2. The runtime tool bridge in `src/managed/` validates every response against `provenancedRecordSchema`. An unstamped record short-circuits the agent's tool call with `is_error: true` and the structured event `bridge_missing_provenance`. The agent never sees an unstamped record.
+2. The runtime tool bridge in `src/agent/managed/` validates every response against `provenancedRecordSchema`. An unstamped record short-circuits the agent's tool call with `is_error: true` and the structured event `bridge_missing_provenance`. The agent never sees an unstamped record.
 3. The vault projection (`metadata.dataSources`, `metadata.upstreamIds`) is filled at write time, so search/filter does not have to walk full payloads.
 4. Canonical V1 citations of the form `mcp:<source>:<upstreamId>` are resolved by `linkSourceDocumentsToVault` to the corresponding vault item's `vault:<id>` after the run.
 
 ## Managed skill provisioning
 
-The worker bootstraps managed skills before creating a managed session. It hashes each checked-in skill directory under `src/agent/managed/skills/`, reuses an existing uploaded skill with the deterministic title `<Display title> <hash>`, creates it only when absent, and wires the resolved ID/version into `process.env`. If bootstrap cannot resolve every required skill (`datafordeler`, `dataforsyningen`, `plandata`, `sql`), the claimed report job fails loudly before a managed session is attempted.
+The worker bootstraps managed skills before creating a managed session. It hashes each checked-in skill directory under `src/agent/managed/skills/`, reuses an existing uploaded skill with the deterministic title `<Display title> <hash>`, creates it only when absent, and wires the resolved ID/version into `process.env`. The bridge requires both `data-collection` and `sql`. If bootstrap cannot resolve every required skill, the claimed report job fails loudly before a managed session is attempted.
 
-`DATAFORDELER_SKILL_ID`, `DATAFORSYNINGEN_SKILL_ID`, `PLANDATA_SKILL_ID`, and `SQL_SKILL_ID` are optional overrides, not hand-maintained deployment requirements. Set `MANAGED_AGENT_REQUIRE_CONFIGURED_SKILLS=on` only for environments where runtime skill creation/listing must be disabled; then every `*_SKILL_ID` must be provided and non-empty.
+`DATA_COLLECTION_SKILL_ID` and `SQL_SKILL_ID` are optional overrides, not hand-maintained deployment requirements. Set `MANAGED_AGENT_REQUIRE_CONFIGURED_SKILLS=on` only for environments where runtime skill creation/listing must be disabled; then every active `*_SKILL_ID` must be provided and non-empty.
 
 ## Managed-agent connection resilience
 

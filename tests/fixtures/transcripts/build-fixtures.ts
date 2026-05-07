@@ -5,7 +5,7 @@
  * These transcripts are NOT recordings of real Anthropic runs (the recorder
  * for that lives at `scripts/record-agent-transcript.ts`). They exist so the
  * replay-runner test path has known-shaped input to validate the loader,
- * progress fan-out, mcpToolCalls plumbing, and provenance enforcement
+ * progress fan-out, mcpCollectionEvidence plumbing, and provenance enforcement
  * without burning Anthropic credits.
  */
 
@@ -18,8 +18,7 @@ import {
   buildFinalEntry,
   parseTranscript,
   serializeTranscript,
-  stampPayload,
-  type McpToolCallRecord,
+  type McpCollectionEvidenceRecord,
   type TranscriptEntry,
   type TranscriptHeader,
 } from "@brikell/shared";
@@ -52,67 +51,38 @@ function buildHeader(scenario: string): TranscriptHeader {
 
 function buildBasicSuccess(): { header: TranscriptHeader; entries: TranscriptEntry[] } {
   const header = buildHeader("basic-success");
-  const stampedAddressResult = stampPayload(
-    {
-      records: [
-        stampPayload(
-          {
-            id: "addr-test-001",
-            label: ADDRESS.label,
-            postalCode: ADDRESS.postalCode,
-            city: ADDRESS.city,
-          },
-          { source: "dataforsyningen.dar", upstreamId: "addr-test-001" },
-        ),
-      ],
-    },
-    { source: "dataforsyningen.dar", upstreamId: "addr-test-001" },
-  );
-  const stampedBfeResult = stampPayload(
-    {
-      bfeNumber: "1234567",
-      address: ADDRESS.label,
-    },
-    { source: "datafordeler.ejendom", upstreamId: "1234567" },
-  );
 
-  const toolCalls: McpToolCallRecord[] = [
+  const evidenceRecords: McpCollectionEvidenceRecord[] = [
     {
-      toolName: "search_address",
-      provider: "dataforsyningen",
-      args: { query: ADDRESS.label },
-      result: stampedAddressResult,
-      fetchedAt: FIXTURE_RECORDED_AT,
-      durationMs: 120,
-      ok: true,
-      sourceProvenance: {
+      collectionId: "col_basic_address",
+      intent: "address.resolve",
+      ref: {
         source: "dataforsyningen.dar",
         upstreamId: "addr-test-001",
         fetchedAt: FIXTURE_RECORDED_AT,
       },
+      responseSha256: "f".repeat(64),
+      counts: { records: 1, documents: 0 },
     },
     {
-      toolName: "lookup_bfe",
-      provider: "datafordeler",
-      args: { addressId: "addr-test-001" },
-      result: stampedBfeResult,
-      fetchedAt: FIXTURE_RECORDED_AT,
-      durationMs: 95,
-      ok: true,
-      sourceProvenance: {
+      collectionId: "col_basic_property",
+      intent: "property.collect",
+      ref: {
         source: "datafordeler.ejendom",
         upstreamId: "1234567",
         fetchedAt: FIXTURE_RECORDED_AT,
       },
+      responseSha256: "e".repeat(64),
+      counts: { records: 1, documents: 0 },
     },
   ];
 
   const entries: TranscriptEntry[] = [
     { kind: "progress", message: "Starting managed report runner." },
     { kind: "progress", message: "Resolving address candidate." },
-    { kind: "toolCall", record: toolCalls[0]! },
+    { kind: "collectionEvidence", record: evidenceRecords[0]! },
     { kind: "progress", message: "Looking up property identifier." },
-    { kind: "toolCall", record: toolCalls[1]! },
+    { kind: "collectionEvidence", record: evidenceRecords[1]! },
     { kind: "progress", message: "Compiling canonical report." },
     buildFinalEntry({
       markdown: buildFixtureReportMarkdown("fixture-job-basic", ADDRESS),
@@ -123,7 +93,7 @@ function buildBasicSuccess(): { header: TranscriptHeader; entries: TranscriptEnt
       ),
       canonicalSource: "runner",
       sessionId: "fixture-session-basic",
-      mcpToolCalls: toolCalls,
+      mcpCollectionEvidence: evidenceRecords,
     }),
   ];
 
@@ -132,29 +102,18 @@ function buildBasicSuccess(): { header: TranscriptHeader; entries: TranscriptEnt
 
 function buildRunnerError(): { header: TranscriptHeader; entries: TranscriptEntry[] } {
   const header = buildHeader("runner-error");
-  const failedToolCall: McpToolCallRecord = {
-    toolName: "search_address",
-    provider: "dataforsyningen",
-    args: { query: ADDRESS.label },
-    fetchedAt: FIXTURE_RECORDED_AT,
-    durationMs: 1200,
-    ok: false,
-    diagnostic: "Upstream timeout after 1200ms",
-    sourceProvenance: {
-      source: "dataforsyningen.dar",
-      fetchedAt: FIXTURE_RECORDED_AT,
-    },
-  };
 
+  // Failed collections do not produce an evidence record (the bridge only
+  // emits evidence on success). The transcript still records the progress
+  // fan-out and a final entry with empty mcpCollectionEvidence.
   const entries: TranscriptEntry[] = [
     { kind: "progress", message: "Starting managed report runner." },
     { kind: "progress", message: "Resolving address candidate." },
-    { kind: "toolCall", record: failedToolCall },
     { kind: "progress", message: "Address lookup failed; recording diagnostic." },
     buildFinalEntry({
       canonicalAbsentReason: "Address lookup failed; cannot continue.",
       sessionId: "fixture-session-error",
-      mcpToolCalls: [failedToolCall],
+      mcpCollectionEvidence: [],
     }),
   ];
 

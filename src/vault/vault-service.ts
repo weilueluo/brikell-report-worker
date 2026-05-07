@@ -1,17 +1,12 @@
 import { getAssignmentForOwner, markAssignmentVaultRecorded } from "../assignments/assignment-service";
 import { createStores } from "../storage";
 import {
-  collectProvenance,
-  makeMcpToolCallVaultItemId,
   makeReportVaultItemId,
-  mcpToolCallVaultItemTitle,
   reportVaultItemTitle,
   vaultItemSchema,
-  type McpToolCallRecord,
   type ReportArtifactInput,
   type VaultItem,
 } from "@brikell/shared";
-import { mcpEvidenceSourceLink } from "./source-links";
 
 export type RecordReportArtifactsInput = {
   assignmentId: string;
@@ -55,72 +50,6 @@ export async function recordReportArtifacts(input: RecordReportArtifactsInput): 
   }
 
   await markAssignmentVaultRecorded(input.assignmentId, now);
-  return created;
-}
-
-export type RecordMcpToolCallEvidenceInput = {
-  assignmentId: string;
-  ownerClientId: string;
-  jobId: string;
-  toolCalls: ReadonlyArray<McpToolCallRecord>;
-};
-
-export async function recordMcpToolCallEvidence(
-  input: RecordMcpToolCallEvidenceInput,
-): Promise<VaultItem[]> {
-  if (input.toolCalls.length === 0) return [];
-  const { vault } = createStores();
-  const now = new Date().toISOString();
-  const created: VaultItem[] = [];
-
-  for (let index = 0; index < input.toolCalls.length; index++) {
-    const record = input.toolCalls[index];
-    const id = makeMcpToolCallVaultItemId({
-      assignmentId: input.assignmentId,
-      jobId: input.jobId,
-      index,
-      toolName: record.toolName,
-    });
-    const existing = await vault.get(id);
-    if (existing) {
-      created.push(existing);
-      continue;
-    }
-    const sourceUrl = mcpEvidenceSourceLink({
-      provider: record.provider,
-      toolName: record.toolName,
-      args: record.args,
-      result: record.result,
-    });
-    const refs = collectProvenance(record.result);
-    const item: VaultItem = vaultItemSchema.parse({
-      id,
-      ownerClientId: input.ownerClientId,
-      assignmentId: input.assignmentId,
-      kind: "mcp_tool_result",
-      title: mcpToolCallVaultItemTitle(record),
-      sourceJobId: input.jobId,
-      metadata: {
-        provider: record.provider,
-        toolName: record.toolName,
-        fetchedAt: record.fetchedAt,
-        ok: record.ok,
-        durationMs: record.durationMs,
-        diagnostic: record.diagnostic,
-        sourceProvenance: record.sourceProvenance,
-        dataSources: refs.sources,
-        upstreamIds: refs.upstreamIds,
-        index,
-        args: record.args,
-        result: record.result,
-        ...(sourceUrl ? { sourceUrl } : {}),
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
-    created.push(await vault.create(item));
-  }
-
   return created;
 }
 

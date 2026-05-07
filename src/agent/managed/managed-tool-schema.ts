@@ -4,6 +4,13 @@ export type ManagedToolInputSchema = {
   required?: string[];
 };
 
+export type ManagedToolDefinition = {
+  type: "custom";
+  name: string;
+  description: string;
+  input_schema: ManagedToolInputSchema;
+};
+
 export type ManagedToolSchemaContext = {
   serverName?: string;
   toolName?: string;

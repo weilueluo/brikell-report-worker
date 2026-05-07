@@ -9,8 +9,9 @@ import type { ManagedRunnerResult, ReportRunner } from "../../../src/agent/runne
  * `scripts/record-agent-transcript.ts`. Each entry is replayed in order:
  *
  * - `progress` entries are forwarded to `onProgress(message)`
- * - `toolCall` entries are accumulated and surfaced in the final result's
- *   `mcpToolCalls` (already validated as post-stamping at parse time)
+ * - `collectionEvidence` entries are accumulated and surfaced in the final
+ *   result's `mcpCollectionEvidence` (already validated as post-stamping at
+ *   parse time)
  * - `final` is the terminal `ManagedRunnerResult`
  *
  * `ensureReady` is a no-op so worker tests never trigger real
@@ -55,7 +56,7 @@ export function replayReportRunner(input: ReplayReportRunnerInput): ReportRunner
         canonicalAbsentReason: final.canonicalAbsentReason,
         sessionId: final.sessionId,
         runLogPath: final.runLogPath,
-        mcpToolCalls: final.mcpToolCalls,
+        mcpCollectionEvidence: final.mcpCollectionEvidence,
       };
       return result;
     },

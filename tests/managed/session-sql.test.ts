@@ -1,33 +1,25 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { defaultSessionSqlDbPath, sanitizeDatasourcePayload, SessionSqlStore } from "../../src/agent/managed/sql/session-store";
+import {
+  defaultSessionSqlDbPath,
+  sanitizeDatasourcePayload,
+  SessionSqlStore,
+} from "../../src/agent/managed/sql/session-store";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
 function resetDbPath(dbPath: string): void {
   rmSync(dbPath, { force: true });
   rmSync(`${dbPath}-shm`, { force: true });
   rmSync(`${dbPath}-wal`, { force: true });
 }
 
-function makeCliStore(name: string): SessionSqlStore {
-  const dbPath = resolve(__dirname, ".generated", `${name}.json`);
-  mkdirSync(resolve(dbPath, ".."), { recursive: true });
-  resetDbPath(dbPath);
-  const store = new SessionSqlStore({
-    dbPath,
-    sessionId: "session-1",
-    sqliteCommand: process.execPath,
-    sqliteArgs: [resolve(__dirname, "fixtures", "fake-sqlite3.js")],
-  });
-  store.init();
-  return store;
-}
-
-function makeDefaultStore(name: string): SessionSqlStore {
+function makeDefaultStore(name: string): { store: SessionSqlStore; dbPath: string } {
   const dbPath = resolve(__dirname, ".generated", `${name}.db`);
   mkdirSync(resolve(dbPath, ".."), { recursive: true });
   resetDbPath(dbPath);
@@ -36,22 +28,42 @@ function makeDefaultStore(name: string): SessionSqlStore {
     sessionId: "session-1",
   });
   store.init();
-  return store;
+  return { store, dbPath };
 }
 
-function withEmptyPath(callback: () => void): void {
-  const previousPath = process.env.PATH;
-  const previousWindowsPath = process.env.Path;
-  process.env.PATH = "";
-  process.env.Path = "";
-  try {
-    callback();
-  } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    if (previousWindowsPath === undefined) delete process.env.Path;
-    else process.env.Path = previousWindowsPath;
-  }
+type DatasourceCallRow = {
+  call_id: string;
+  session_id: string;
+  datasource: string;
+  status: "success" | "error";
+  request_json: string;
+  response_json: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  summary: string;
+};
+
+function selectCallRow(dbPath: string, callId: string): DatasourceCallRow {
+  // Reuse the same node:sqlite executor the store uses, but for read-only
+  // verification rather than DDL/DML. Keeping reads in the test (rather than
+  // exposing a list helper on the store) avoids leaking debug surface into
+  // production code.
+  const script = `
+const { DatabaseSync } = require("node:sqlite");
+const dbPath = process.argv[process.argv.length - 1];
+const db = new DatabaseSync(dbPath);
+const callId = process.env.READ_CALL_ID;
+const row = db.prepare("SELECT call_id, session_id, datasource, status, request_json, response_json, error_code, error_message, summary FROM datasource_calls WHERE call_id = ?").get(callId);
+db.close();
+process.stdout.write(JSON.stringify(row));
+`;
+  const stdout = execFileSync(process.execPath, ["--no-warnings", "-e", script, dbPath], {
+    encoding: "utf8",
+    env: { ...process.env, READ_CALL_ID: callId },
+  });
+  const parsed = JSON.parse(stdout);
+  if (!parsed) throw new Error(`no datasource_calls row for call_id=${callId}`);
+  return parsed as DatasourceCallRow;
 }
 
 function withEnv(overrides: Record<string, string | undefined>, callback: () => void): void {
@@ -62,7 +74,6 @@ function withEnv(overrides: Record<string, string | undefined>, callback: () => 
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-
   try {
     callback();
   } finally {
@@ -75,113 +86,15 @@ function withEnv(overrides: Record<string, string | undefined>, callback: () => 
 
 test("default session SQL path uses tmp storage on Vercel", () => {
   withEnv({ VERCEL: "1", MANAGED_AGENT_SESSION_SQL_DIR: undefined }, () => {
-    assert.match(defaultSessionSqlDbPath("session:one").replace(/\\/g, "/"), /\/tmp\/\.managed-agent-sql\/session_one\.db$/);
-  });
-});
-
-test("default session SQL store does not require sqlite3 on PATH", () => {
-  withEmptyPath(() => {
-    const store = makeDefaultStore("default-runtime");
-    const context = store.ingestSuccessfulDatasourceCall(
-      {
-        callId: "call-default",
-        sessionId: "session-1",
-        datasource: "datafordeler",
-        managedToolName: "datafordeler_get_property_context",
-        mcpToolName: "get_property_context",
-        input: { input: { type: "address", value: "Frederiksdalsvej 80" } },
-      },
-      { structuredContent: { propertyId: "123", bfeNummer: 456, warnings: ["BBR details require explicit expansion."] } },
+    assert.match(
+      defaultSessionSqlDbPath("session:one").replace(/\\/g, "/"),
+      /\/tmp\/\.managed-agent-sql\/session_one\.db$/,
     );
-
-    assert.equal(context.status, "success");
-    assert.ok(context.facts.some((fact) => fact.key === "bfeNummer" && fact.value === 456));
-    assert.ok(context.limitations.some((message) => /BBR details/.test(message)));
   });
 });
 
-test("session SQL ingestion returns SQL datasource context without host paths", () => {
-  const store = makeCliStore("success");
-  const context = store.ingestSuccessfulDatasourceCall(
-    {
-      callId: "call-1",
-      sessionId: "session-1",
-      datasource: "datafordeler",
-      managedToolName: "datafordeler_get_property_context",
-      mcpToolName: "get_property_context",
-      input: { input: { type: "address", value: "Frederiksdalsvej 80" }, token: "secret" },
-    },
-    {
-      structuredContent: {
-        propertyId: "123",
-        bfeNummer: 456,
-        units: 70,
-        warnings: ["BBR details require explicit expansion."],
-        nextActions: ["Call unit expansion only if exact distribution is required."],
-        owner: { name: "restricted" },
-      },
-    },
-  );
-
-  assert.equal(context.type, "sql_datasource_context");
-  assert.equal(context.status, "success");
-  assert.equal(context.datasource, "datafordeler");
-  assert.ok(context.facts.some((fact) => fact.key === "bfeNummer" && fact.value === 456));
-  assert.ok(context.limitations.some((message) => /BBR details/.test(message)));
-  assert.ok(context.followups.some((message) => /unit expansion/.test(message)));
-  assert.doesNotMatch(JSON.stringify(context), /managed-agent|\.db|restricted|secret/i);
-});
-
-test("session SQL ingestion indexes public BBR detail fields", () => {
-  const store = makeCliStore("bbr-detail-fields");
-  const context = store.ingestSuccessfulDatasourceCall(
-    {
-      callId: "call-bbr-detail",
-      sessionId: "session-1",
-      datasource: "datafordeler",
-      managedToolName: "datafordeler_property_get_units",
-      mcpToolName: "property.get_units",
-      input: { propertyId: "2074700" },
-    },
-    {
-      structuredContent: {
-        data: {
-          buildings: [
-            {
-              attributes: {
-                byg021BygningensAnvendelse: "140",
-                byg026Opfoerelsesaar: 1932,
-              },
-            },
-          ],
-          units: [
-            {
-              attributes: {
-                etage: "1",
-                enh020EnhedensAnvendelse: "140",
-                enh026EnhedensSamledeAreal: 72,
-                enh027ArealTilBeboelse: 72,
-                enh028ArealTilErhverv: 0,
-                enh031AntalVaerelser: 3,
-              },
-            },
-          ],
-        },
-      },
-    },
-  );
-
-  const factKeys = new Set(context.facts.map((fact) => fact.key));
-  assert.ok(factKeys.has("byg026Opfoerelsesaar"));
-  assert.ok(factKeys.has("etage"));
-  assert.ok(factKeys.has("enh026EnhedensSamledeAreal"));
-  assert.ok(factKeys.has("enh027ArealTilBeboelse"));
-  assert.ok(factKeys.has("enh028ArealTilErhverv"));
-  assert.ok(factKeys.has("enh031AntalVaerelser"));
-});
-
-test("diagnostics are recorded but excluded from evidence-backed facts", () => {
-  const store = makeCliStore("diagnostic");
+test("recordDiagnostic writes an error row with redacted request payload and bounded message", () => {
+  const { store, dbPath } = makeDefaultStore("diagnostic");
   store.recordDiagnostic(
     {
       callId: "call-error",
@@ -189,16 +102,94 @@ test("diagnostics are recorded but excluded from evidence-backed facts", () => {
       datasource: "plandata",
       managedToolName: "plandata_get_plan_context",
       mcpToolName: "get_plan_context",
-      input: { planIds: [] },
+      input: { planIds: [], token: "secret" },
     },
     { code: "validation_error", message: "geometry, planId, or non-empty planIds is required" },
   );
+  const row = selectCallRow(dbPath, "call-error");
+  assert.equal(row.status, "error");
+  assert.equal(row.error_code, "validation_error");
+  assert.equal(row.error_message, "geometry, planId, or non-empty planIds is required");
+  assert.equal(row.datasource, "plandata");
+  assert.equal(row.session_id, "session-1");
+  // Token is REDACTED by sanitizeDatasourcePayload; no raw secret persisted.
+  const request = JSON.parse(row.request_json);
+  assert.equal(request.token, "[REDACTED]");
+  assert.deepEqual(request.planIds, []);
+  assert.match(row.summary, /^plandata\.get_plan_context failed: /);
+  // Diagnostic rows do not carry response_json.
+  assert.equal(row.response_json, null);
+});
 
-  const calls = store.listDatasourceCalls();
-  assert.deepEqual(store.listDatasourceFacts(), []);
-  assert.equal(calls[0]?.datasource, "plandata");
-  assert.equal(calls[0]?.status, "error");
-  assert.match(calls[0]?.error_message ?? "", /planIds/);
+test("recordIntentAudit writes a metadata-only audit row by default (no rawResponse)", () => {
+  const { store, dbPath } = makeDefaultStore("intent-audit-default");
+  withEnv({ MANAGED_AGENT_AUDIT_RAW: undefined }, () => {
+    store.recordIntentAudit(
+      {
+        callId: "call-success",
+        sessionId: "session-1",
+        datasource: "datafordeler",
+        managedToolName: "mcp_property_collect",
+        mcpToolName: "property.collect",
+        input: { propertyId: "12345" },
+      },
+      { code: "success", durationMs: 12, intent: "property.collect" },
+      { large: "raw payload that must NOT appear in the audit row by default" },
+    );
+  });
+  const row = selectCallRow(dbPath, "call-success");
+  assert.equal(row.status, "success");
+  assert.equal(row.error_code, "");
+  assert.equal(row.error_message, "");
+  assert.equal(row.datasource, "datafordeler");
+  const response = JSON.parse(row.response_json ?? "{}");
+  assert.deepEqual(Object.keys(response), ["audit"]);
+  assert.equal(response.audit.code, "success");
+  assert.equal(response.audit.intent, "property.collect");
+  assert.ok(!("rawResponse" in response), "default audit row must not carry rawResponse");
+  // The literal raw payload string never appears in the persisted JSON.
+  assert.ok(!(row.response_json ?? "").includes("raw payload that must NOT appear"));
+});
+
+test("recordIntentAudit includes rawResponse only when MANAGED_AGENT_AUDIT_RAW=1", () => {
+  const { store, dbPath } = makeDefaultStore("intent-audit-raw");
+  withEnv({ MANAGED_AGENT_AUDIT_RAW: "1" }, () => {
+    store.recordIntentAudit(
+      {
+        callId: "call-success-raw",
+        sessionId: "session-1",
+        datasource: "datafordeler",
+        managedToolName: "mcp_property_collect",
+        mcpToolName: "property.collect",
+        input: { propertyId: "12345" },
+      },
+      { code: "success", durationMs: 12, intent: "property.collect" },
+      { propertyId: "12345", buildings: [{ id: "b1" }] },
+    );
+  });
+  const row = selectCallRow(dbPath, "call-success-raw");
+  const response = JSON.parse(row.response_json ?? "{}");
+  assert.deepEqual(Object.keys(response).sort(), ["audit", "rawResponse"]);
+  assert.equal(response.rawResponse.propertyId, "12345");
+});
+
+test("recordIntentAudit writes an error row when audit code is non-success", () => {
+  const { store, dbPath } = makeDefaultStore("intent-audit-error");
+  store.recordIntentAudit(
+    {
+      callId: "call-fail",
+      sessionId: "session-1",
+      datasource: "plandata",
+      managedToolName: "mcp_planning_collect",
+      mcpToolName: "planning.collect",
+      input: { planId: "123" },
+    },
+    { code: "upstream_timeout", durationMs: 60_000, intent: "planning.collect" },
+  );
+  const row = selectCallRow(dbPath, "call-fail");
+  assert.equal(row.status, "error");
+  assert.equal(row.error_code, "upstream_timeout");
+  assert.match(row.error_message ?? "", /Intent bridge error: upstream_timeout/);
 });
 
 test("sanitization redacts secrets and restricted person fields while keeping cadastral keys", () => {
@@ -216,4 +207,3 @@ test("sanitization redacts secrets and restricted person fields while keeping ca
     nested: { apiKey: "[REDACTED]" },
   });
 });
-
