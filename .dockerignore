@@ -3,6 +3,7 @@ node_modules
 .git
 .gitignore
 .gitmodules
+brikell-shared
 .env
 .env.local
 .env.*.local
